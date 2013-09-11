@@ -84,7 +84,7 @@ class StatCollector {
 // order but we don't care because the data is going to be sorted again.
 class CollapseStream {
   public:
-    CollapseStream(const util::stream::ChainPosition &position, uint64_t counts_threshold=0) :
+    CollapseStream(const util::stream::ChainPosition &position, std::vector<uint64_t> &counts_threshold) :
       current_(NULL, NGram::OrderFromSize(position.GetChain().EntrySize())),
       counts_threshold_(counts_threshold),
       block_(position) {
@@ -100,7 +100,7 @@ class CollapseStream {
       assert(block_);
       // Deletes any entries that have <s> in the 1st (not 0th) position
      // or entries of count  pruning counts_threshold
-      if ((current_.begin()[1] == kBOS || current_.Count() <= counts_threshold_) && current_.Base() < copy_from_) {
+      if ((current_.begin()[1] == kBOS || current_.Count() <= counts_threshold_[current_.Order()-1]) && current_.Base() < copy_from_) {
         memcpy(current_.Base(), copy_from_, current_.TotalSize());
         UpdateCopyFrom();
       }
@@ -137,7 +137,7 @@ class CollapseStream {
     // Goes backwards in the block
     uint8_t *copy_from_;
 
-    uint64_t counts_threshold_;
+    std::vector<uint64_t> &counts_threshold_;
 
     util::stream::Link block_;
 };
@@ -192,7 +192,7 @@ void AdjustCounts::Run(const ChainPositions &positions) {
 
       uint64_t order = (*lower_valid)->Order();
       uint64_t realCount = lower_counts[order - 1];
-      if(order == 1 || counts_threshold_ && realCount > counts_threshold_)
+      if(order == 1 || counts_threshold_[order - 1] && realCount > counts_threshold_[order - 1])
           ++*lower_valid;
     }
 

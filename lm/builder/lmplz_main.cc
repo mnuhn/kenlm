@@ -7,6 +7,7 @@
 
 #include <boost/program_options.hpp>
 #include <boost/version.hpp>
+#include <vector>
 
 namespace {
 class SizeNotify {
@@ -52,7 +53,7 @@ int main(int argc, char *argv[]) {
       ("verbose_header", po::bool_switch(&pipeline.verbose_header), "Add a verbose header to the ARPA file that includes information such as token count, smoothing type, etc.")
       ("text", po::value<std::string>(&text), "Read text from a file instead of stdin")
       ("arpa", po::value<std::string>(&arpa), "Write ARPA to a file instead of stdout")
-      ("counts_threshold,P", po::value<uint64_t>(&pipeline.counts_threshold)->default_value(0), "Prune n-grams of count equal to or lower than threshold. 0 means no pruning");
+      ("counts_threshold,P", po::value<std::vector<uint64_t> >(&pipeline.counts_threshold), "Prune n-grams of count equal to or lower than threshold. 0 means no pruning");
     if (argc == 1) {
       std::cerr << 
         "Builds unpruned language models with modified Kneser-Ney smoothing.\n\n"
@@ -78,6 +79,38 @@ int main(int argc, char *argv[]) {
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, options), vm);
     po::notify(vm);
+
+    //std::cerr << "vector: " << pipeline.counts_threshold.size() << std::endl;
+    // validate pruning threshold if specified
+    if (pipeline.counts_threshold.size() > 0) {
+       // chekc if each n-gram order has threshold specified
+       if (pipeline.counts_threshold.size() != pipeline.order) {
+           std::cerr << 
+            "Incorrect use of pruning option. Set pruning threshold for each order n-grams.\n"
+            << "Threshold counts set: " << pipeline.counts_threshold.size() << std::endl
+            << "Threshold counts expected: " << pipeline.order << std::endl; 
+           return 1;
+       }
+       // threshold for unigram can only be 0 (no pruning)
+       if (pipeline.counts_threshold[0] != 0) {
+        std::cerr << "You are not allowed to prune unigrams. Set counts_threshold to 0 fro unigrams."
+            "Currently you are setting " << pipeline.counts_threshold[0] << std::endl;
+        return 1;
+       }
+       // check if threshold are not in decreasing order
+       uint64_t lower_threshold = 0;
+       for (std::vector<uint64_t>::iterator it = pipeline.counts_threshold.begin(); it != pipeline.counts_threshold.end(); ++it)
+           if (lower_threshold > *it) {
+               std::cerr << "Do not speciefie pruning threshold counts in decreasing order\n"
+              "Pruning counts threshold for lower n-grams is not allowed to be specified higher than for higher order n-grams" << std::endl;
+               return 1;
+           } else lower_threshold = *it;
+    } else {
+       // pruning is not specified, so set threshold to 0 for all order n-grams
+       pipeline.counts_threshold.reserve(pipeline.order);
+       for (std::size_t i = 0; i < pipeline.order; ++i)
+            pipeline.counts_threshold.push_back(0);
+    }
 
     // required() appeared in Boost 1.42.0.
 #if BOOST_VERSION < 104200

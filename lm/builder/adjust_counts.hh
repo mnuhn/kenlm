@@ -27,7 +27,7 @@ class BadDiscountException : public util::Exception {
  */
 class AdjustCounts {
   public:
-    AdjustCounts(std::vector<uint64_t> &counts, std::vector<Discount> &discounts, uint64_t counts_threshold=0)
+    AdjustCounts(std::vector<uint64_t> &counts, std::vector<Discount> &discounts, std::vector<uint64_t> &counts_threshold)
       : counts_(counts), discounts_(discounts), counts_threshold_(counts_threshold) {}
 
     void Run(const ChainPositions &positions);
@@ -35,7 +35,7 @@ class AdjustCounts {
   private:
     std::vector<uint64_t> &counts_;
     std::vector<Discount> &discounts_;
-    uint64_t counts_threshold_;
+    std::vector<uint64_t> &counts_threshold_;
 };
 
 } // namespace builder

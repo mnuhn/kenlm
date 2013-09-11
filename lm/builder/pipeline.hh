@@ -9,6 +9,7 @@
 
 #include <string>
 #include <cstddef>
+#include <vector>
 
 namespace lm { namespace builder {
 
@@ -31,7 +32,7 @@ struct PipelineConfig {
   std::size_t block_count;
 
   // n-gram count threshold for pruning. Value (0) means no pruning.
-  uint64_t counts_threshold;
+  std::vector<uint64_t> counts_threshold;
 
   const std::string &TempPrefix() const { return sort.temp_prefix; }
   std::size_t TotalMemory() const { return sort.total_memory; }
