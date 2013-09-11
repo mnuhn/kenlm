@@ -192,7 +192,7 @@ void AdjustCounts::Run(const ChainPositions &positions) {
 
       uint64_t order = (*lower_valid)->Order();
       uint64_t realCount = lower_counts[order - 1];
-      if(order == 1 || counts_threshold_[order - 1] && realCount > counts_threshold_[order - 1])
+      if(order == 1 || !counts_threshold_[order - 1] || realCount > counts_threshold_[order - 1])
           ++*lower_valid;
     }
 

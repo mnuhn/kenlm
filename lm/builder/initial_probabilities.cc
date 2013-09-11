@@ -14,13 +14,13 @@ namespace lm { namespace builder {
 
 namespace {
 struct BufferEntry {
-  // Gamma from page 20 of Chen and Goodman.  
+  // Gamma from page 20 of Chen and Goodman.
   float gamma;
-  // \sum_w a(c w) for all w.  
+  // \sum_w a(c w) for all w.
   float denominator;
 };
 
-// Extract an array of gamma from an array of BufferEntry.  
+// Extract an array of gamma from an array of BufferEntry.
 class OnlyGamma {
   public:
     void Run(const util::stream::ChainPosition &position) {
@@ -38,7 +38,7 @@ class OnlyGamma {
 
 class AddRight {
   public:
-    AddRight(const Discount &discount, const util::stream::ChainPosition &input) 
+    AddRight(const Discount &discount, const util::stream::ChainPosition &input)
       : discount_(discount), input_(input) {}
 
     void Run(const util::stream::ChainPosition &output) {
@@ -128,7 +128,7 @@ void InitialProbabilities(const InitialProbabilitiesConfig &config, const std::v
     gamma_out.push_back(gamma_config);
     gamma_out[i] >> AddRight(discounts[i], second);
     primary[i] >> MergeRight(config.interpolate_unigrams, gamma_out[i].Add(), discounts[i]);
-    // Don't bother with the OnlyGamma thread for something to discard.  
+    // Don't bother with the OnlyGamma thread for something to discard.
     if (i) gamma_out[i] >> OnlyGamma();
   }
 }
