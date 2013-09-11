@@ -3,6 +3,7 @@
 #include "util/stream/timer.hh"
 
 #include <algorithm>
+#include <iostream>
 
 namespace lm { namespace builder {
 
@@ -169,17 +170,36 @@ void AdjustCounts::Run(const ChainPositions &positions) {
   *streams[0]->begin() = kBOS;
   // not in stats because it will get put in later.
 
+  std::vector<uint64_t> lower_counts(positions.size(), 0);
+
   // iterate over full (the stream of the highest order ngrams)
+
   for (; full; ++full) {
+
     const WordIndex *different = FindDifference(*full, **lower_valid);
     std::size_t same = full->end() - 1 - different;
-    // Increment the adjusted count.
     if (same) ++streams[same - 1]->Count();
 
     // Output all the valid ones that changed.
     for (; lower_valid >= &streams[same]; --lower_valid) {
+
+//      std::cerr << (*lower_valid)->Order() << " : ";
+//      for(const WordIndex* w = (*lower_valid)->begin(); w < (*lower_valid)->end(); w++)
+//          std::cerr << *w << " ";
+//      std::cerr << "= " << lower_counts[(*lower_valid)->Order() - 1] << std::endl;
+
       stats.Add(lower_valid - streams.begin(), (*lower_valid)->Count());
-      ++*lower_valid;
+
+      uint64_t order = (*lower_valid)->Order();
+      uint64_t realCount = lower_counts[order - 1];
+      if(order == 1 || counts_threshold_ && realCount > counts_threshold_)
+          ++*lower_valid;
+    }
+
+    for(std::size_t i = 0; i < lower_counts.size(); ++i) {
+        if(i >= same)
+            lower_counts[i] = 0;
+        lower_counts[i] += full->Count();
     }
 
     // This is here because bos is also const WordIndex *, so copy gets
