@@ -20,21 +20,22 @@ class BadDiscountException : public util::Exception {
 };
 
 /* Compute adjusted counts.  
- * Input: unique suffix sorted N-grams (and just the N-grams) with raw counts.
+ * Input: unique suffix sorted N-grams (and just the N-grams) with raw counts, and counts threshold for pruning.
  * Output: [1,N]-grams with adjusted counts.  
  * [1,N)-grams are in suffix order
  * N-grams are in undefined order (they're going to be sorted anyway).
  */
 class AdjustCounts {
   public:
-    AdjustCounts(std::vector<uint64_t> &counts, std::vector<Discount> &discounts)
-      : counts_(counts), discounts_(discounts) {}
+    AdjustCounts(std::vector<uint64_t> &counts, std::vector<Discount> &discounts, uint64_t counts_threshold=0)
+      : counts_(counts), discounts_(discounts), counts_threshold_(counts_threshold) {}
 
     void Run(const ChainPositions &positions);
 
   private:
     std::vector<uint64_t> &counts_;
     std::vector<Discount> &discounts_;
+    uint64_t counts_threshold_;
 };
 
 } // namespace builder

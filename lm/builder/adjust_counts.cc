@@ -83,9 +83,10 @@ class StatCollector {
 // order but we don't care because the data is going to be sorted again.  
 class CollapseStream {
   public:
-    CollapseStream(const util::stream::ChainPosition &position) :
+    CollapseStream(const util::stream::ChainPosition &position, uint64_t counts_threshold=0) :
       current_(NULL, NGram::OrderFromSize(position.GetChain().EntrySize())),
-      block_(position) {
+      block_(position), 
+      counts_threshold_(counts_threshold) {
       StartBlock();
     }
 
@@ -96,7 +97,9 @@ class CollapseStream {
 
     CollapseStream &operator++() {
       assert(block_);
-      if (current_.begin()[1] == kBOS && current_.Base() < copy_from_) {
+      // Deletes any entries that have <s> in the 1st (not 0th) position
+     // or entries of count below pruning counts_threshold
+      if ((current_.begin()[1] == kBOS || current_.Count() < counts_threshold_) && current_.Base() < copy_from_) {
         memcpy(current_.Base(), copy_from_, current_.TotalSize());
         UpdateCopyFrom();
       }
@@ -133,6 +136,8 @@ class CollapseStream {
     // Goes backwards in the block
     uint8_t *copy_from_;
 
+    uint64_t counts_threshold_;
+
     util::stream::Link block_;
 };
 
@@ -153,7 +158,7 @@ void AdjustCounts::Run(const ChainPositions &positions) {
 
   NGramStreams streams;
   streams.Init(positions, positions.size() - 1);
-  CollapseStream full(positions[positions.size() - 1]);
+  CollapseStream full(positions[positions.size() - 1], counts_threshold_);
 
   // Initialization: <unk> has count 0 and so does <s>.  
   NGramStream *lower_valid = streams.begin();

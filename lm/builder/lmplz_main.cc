@@ -51,7 +51,8 @@ int main(int argc, char *argv[]) {
       ("vocab_file", po::value<std::string>(&pipeline.vocab_file)->default_value(""), "Location to write vocabulary file")
       ("verbose_header", po::bool_switch(&pipeline.verbose_header), "Add a verbose header to the ARPA file that includes information such as token count, smoothing type, etc.")
       ("text", po::value<std::string>(&text), "Read text from a file instead of stdin")
-      ("arpa", po::value<std::string>(&arpa), "Write ARPA to a file instead of stdout");
+      ("arpa", po::value<std::string>(&arpa), "Write ARPA to a file instead of stdout")
+      ("counts_threshold,P", po::value<uint64_t>(&pipeline.counts_threshold)->default_value(0), "Prune n-grams of count below threshold. 0 means no pruning");
     if (argc == 1) {
       std::cerr << 
         "Builds unpruned language models with modified Kneser-Ney smoothing.\n\n"
