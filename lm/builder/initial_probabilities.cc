@@ -3,7 +3,9 @@
 #include "lm/builder/discount.hh"
 #include "lm/builder/ngram_stream.hh"
 #include "lm/builder/sort.hh"
+#include "lm/builder/hash_gamma.hh"
 #include "util/file.hh"
+#include "util/murmur_hash.hh"
 #include "util/stream/chain.hh"
 #include "util/stream/io.hh"
 #include "util/stream/stream.hh"
@@ -15,23 +17,26 @@ namespace lm { namespace builder {
 namespace {
 struct BufferEntry {
   // Gamma from page 20 of Chen and Goodman.
+  uint64_t hash_value;
   float gamma;
   // \sum_w a(c w) for all w.
   float denominator;
 };
 
-// Extract an array of gamma from an array of BufferEntry.
+// Extract an array of HashedGamma from an array of BufferEntry.
 class OnlyGamma {
   public:
     void Run(const util::stream::ChainPosition &position) {
       for (util::stream::Link block_it(position); block_it; ++block_it) {
-        float *out = static_cast<float*>(block_it->Get());
-        const float *in = out;
-        const float *end = static_cast<const float*>(block_it->ValidEnd());
-        for (out += 1, in += 2; in < end; out += 1, in += 2) {
-          *out = *in;
+        HashGamma *out = static_cast<HashGamma*>(block_it->Get());
+        const BufferEntry *in = static_cast<const BufferEntry*>(block_it->Get());
+        const BufferEntry *end = static_cast<const BufferEntry*>(block_it->ValidEnd());
+        for (out += 1, in += 1; in < end; out += 1, in += 1) {
+          float gamma_buf = in->gamma;
+          out->hash_value = in->hash_value;
+          out->gamma = gamma_buf;
         }
-        block_it->SetValidSize(block_it->ValidSize() / 2);
+        block_it->SetValidSize((block_it->ValidSize() * sizeof(HashGamma))/sizeof(BufferEntry));
       }
     }
 };
@@ -49,6 +54,7 @@ class AddRight {
       const std::size_t size = sizeof(WordIndex) * previous.size();
       for(; in; ++out) {
         memcpy(&previous[0], in->begin(), size);
+
         uint64_t denominator = 0;
         uint64_t counts[4];
         memset(counts, 0, sizeof(counts));
@@ -57,6 +63,7 @@ class AddRight {
           ++counts[std::min(in->Count(), static_cast<uint64_t>(3))];
         } while (++in && !memcmp(&previous[0], in->begin(), size));
         BufferEntry &entry = *reinterpret_cast<BufferEntry*>(out.Get());
+        entry.hash_value = util::MurmurHashNative(previous.data(), previous.size());
         entry.denominator = static_cast<float>(denominator);
         entry.gamma = 0.0;
         for (unsigned i = 1; i <= 3; ++i) {

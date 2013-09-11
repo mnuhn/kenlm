@@ -2,6 +2,7 @@
 
 #include "lm/builder/adjust_counts.hh"
 #include "lm/builder/corpus_count.hh"
+#include "lm/builder/hash_gamma.hh"
 #include "lm/builder/initial_probabilities.hh"
 #include "lm/builder/interpolate.hh"
 #include "lm/builder/print.hh"
@@ -32,7 +33,7 @@ void PrintStatistics(const std::vector<uint64_t> &counts, const std::vector<Disc
 
 class Master {
   public:
-    explicit Master(const PipelineConfig &config) 
+    explicit Master(const PipelineConfig &config)
       : config_(config), chains_(config.order), files_(config.order) {
       config_.minimum_block = std::max(NGram::TotalSize(config_.order), config_.minimum_block);
     }
@@ -59,7 +60,7 @@ class Master {
       CreateChains(config_.TotalMemory() - merge_using, count_bounds);
       ngrams.Output(chains_.back(), merge_using);
 
-      // Setup unigram file.  
+      // Setup unigram file.
       files_.push_back(util::MakeTemp(config_.TempPrefix()));
     }
 
@@ -199,7 +200,7 @@ class Master {
     PipelineConfig config_;
 
     Chains chains_;
-    // Often only unigrams, but sometimes all orders.  
+    // Often only unigrams, but sometimes all orders.
     FixedArray<util::stream::FileBuffer> files_;
 };
 
@@ -209,7 +210,7 @@ void CountText(int text_file /* input */, int vocab_file /* output */, Master &m
 
   const std::size_t vocab_usage = CorpusCount::VocabUsage(config.vocab_estimate);
   UTIL_THROW_IF(config.TotalMemory() < vocab_usage, util::Exception, "Vocab hash size estimate " << vocab_usage << " exceeds total memory " << config.TotalMemory());
-  std::size_t memory_for_chain = 
+  std::size_t memory_for_chain =
     // This much memory to work with after vocab hash table.
     static_cast<float>(config.TotalMemory() - vocab_usage) /
     // Solve for block size including the dedupe multiplier for one block.
@@ -245,7 +246,7 @@ void InitialProbabilities(const std::vector<uint64_t> &counts, const std::vector
 
   Chains gamma_chains(config.order);
   InitialProbabilities(config.initial_probs, discounts, master.MutableChains(), second, gamma_chains);
-  // Don't care about gamma for 0.  
+  // Don't care about gamma for 0.
   gamma_chains[0] >> util::stream::kRecycle;
   gammas.Init(config.order - 1);
   for (std::size_t i = 1; i < config.order; ++i) {
@@ -263,7 +264,7 @@ void InterpolateProbabilities(const std::vector<uint64_t> &counts, Master &maste
 
   Chains gamma_chains(config.order - 1);
   util::stream::ChainConfig read_backoffs(config.read_backoffs);
-  read_backoffs.entry_size = sizeof(float);
+  read_backoffs.entry_size = sizeof(HashGamma);
   for (std::size_t i = 0; i < config.order - 1; ++i) {
     gamma_chains.push_back(read_backoffs);
     gamma_chains.back() >> gammas[i].Source();
@@ -292,8 +293,8 @@ void Pipeline(PipelineConfig config, int text_file, int out_arpa) {
   UTIL_TIMER("(%w s) Total wall time elapsed\n");
   Master master(config);
 
-  util::scoped_fd vocab_file(config.vocab_file.empty() ? 
-      util::MakeTemp(config.TempPrefix()) : 
+  util::scoped_fd vocab_file(config.vocab_file.empty() ?
+      util::MakeTemp(config.TempPrefix()) :
       util::CreateOrThrow(config.vocab_file.c_str()));
   uint64_t token_count;
   std::string text_file_name;
