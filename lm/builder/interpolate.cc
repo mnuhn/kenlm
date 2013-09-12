@@ -36,8 +36,17 @@ class Callback {
       probs_[order_minus_1 + 1] = pay.complete.prob;
       pay.complete.prob = log10(pay.complete.prob);
       // TODO: this is a hack to skip n-grams that don't appear as context.  Pruning will require some different handling.
+
       if (order_minus_1 < backoffs_.size() && *(gram.end() - 1) != kUNK && *(gram.end() - 1) != kEOS) {
-        const HashGamma *hashed_backoff = static_cast<const HashGamma*>(backoffs_[order_minus_1].Get());
+
+        if(!backoffs_[order_minus_1]) {
+            pay.complete.backoff = 0.0;
+            return;
+        }
+
+
+        void* data = backoffs_[order_minus_1].Get();
+        const HashGamma *hashed_backoff = static_cast<const HashGamma*>(data);
         uint64_t h = util::MurmurHashNative(gram.begin(), gram.Order());
 
         //std::cerr << h << " " << hashed_backoff->hash_value << std::endl;

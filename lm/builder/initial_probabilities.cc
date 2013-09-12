@@ -27,6 +27,7 @@ struct BufferEntry {
 class OnlyGamma {
   public:
     void Run(const util::stream::ChainPosition &position) {
+      size_t i = 0;
       for (util::stream::Link block_it(position); block_it; ++block_it) {
         HashGamma *out = static_cast<HashGamma*>(block_it->Get());
         const BufferEntry *in = static_cast<const BufferEntry*>(block_it->Get());
@@ -35,9 +36,11 @@ class OnlyGamma {
           float gamma_buf = in->gamma;
           out->hash_value = in->hash_value;
           out->gamma = gamma_buf;
+          ++i;
         }
         block_it->SetValidSize((block_it->ValidSize() * sizeof(HashGamma))/sizeof(BufferEntry));
       }
+      std::cerr << "Backoffs: " << i << std::endl;
     }
 };
 

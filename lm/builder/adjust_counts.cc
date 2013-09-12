@@ -22,8 +22,8 @@ const WordIndex* FindDifference(const NGram &full, const NGram &lower_last) {
 
 class StatCollector {
   public:
-    StatCollector(std::size_t order, std::vector<uint64_t> &counts, std::vector<Discount> &discounts)
-      : orders_(order), full_(orders_.back()), counts_(counts), discounts_(discounts) {
+    StatCollector(std::size_t order, std::vector<uint64_t> &counts, std::vector<uint64_t> &counts_pruned, std::vector<Discount> &discounts)
+      : orders_(order), full_(orders_.back()), counts_(counts), counts_pruned_(counts_pruned), discounts_(discounts) {
       memset(&orders_[0], 0, sizeof(OrderStat) * order);
     }
 
@@ -31,10 +31,12 @@ class StatCollector {
 
     void CalculateDiscounts() {
       counts_.resize(orders_.size());
+      counts_pruned_.resize(orders_.size());
       discounts_.resize(orders_.size());
       for (std::size_t i = 0; i < orders_.size(); ++i) {
         const OrderStat &s = orders_[i];
         counts_[i] = s.count;
+        counts_pruned_[i] = s.count_pruned;
 
         for (unsigned j = 1; j < 4; ++j) {
           // TODO: Specialize error message for j == 3, meaning 3+
@@ -53,14 +55,18 @@ class StatCollector {
       }
     }
 
-    void Add(std::size_t order_minus_1, uint64_t count) {
+    void Add(std::size_t order_minus_1, uint64_t count, bool pruned = false) {
       OrderStat &stat = orders_[order_minus_1];
       ++stat.count;
+      if (!pruned)
+        ++stat.count_pruned;
       if (count < 5) ++stat.n[count];
     }
 
-    void AddFull(uint64_t count) {
+    void AddFull(uint64_t count, bool pruned = false) {
       ++full_.count;
+      if (!pruned)
+        ++full_.count_pruned;
       if (count < 5) ++full_.n[count];
     }
 
@@ -69,12 +75,14 @@ class StatCollector {
       // n_1 in equation 26 of Chen and Goodman etc
       uint64_t n[5];
       uint64_t count;
+      uint64_t count_pruned;
     };
 
     std::vector<OrderStat> orders_;
     OrderStat &full_;
 
     std::vector<uint64_t> &counts_;
+    std::vector<uint64_t> &counts_pruned_;
     std::vector<Discount> &discounts_;
 };
 
@@ -100,17 +108,22 @@ class CollapseStream {
       assert(block_);
       // Deletes any entries that have <s> in the 1st (not 0th) position
      // or entries of count  pruning counts_threshold
-      if ((current_.begin()[1] == kBOS || current_.Count() <= counts_threshold_[current_.Order()-1]) && current_.Base() < copy_from_) {
+
+      if ((current_.begin()[1] == kBOS || (counts_threshold_[current_.Order()-1] && current_.Count() <= counts_threshold_[current_.Order()-1]))
+          && current_.Base() < copy_from_) {
         memcpy(current_.Base(), copy_from_, current_.TotalSize());
-        UpdateCopyFrom();
+        UpdateCopyFromForPruning();
       }
+
       current_.NextInMemory();
       uint8_t *block_base = static_cast<uint8_t*>(block_->Get());
+
       if (current_.Base() == block_base + block_->ValidSize()) {
         block_->SetValidSize(copy_from_ + current_.TotalSize() - block_base);
         ++block_;
         StartBlock();
       }
+
       return *this;
     }
 
@@ -122,13 +135,21 @@ class CollapseStream {
       }
       current_.ReBase(block_->Get());
       copy_from_ = static_cast<uint8_t*>(block_->Get()) + block_->ValidSize();
-      UpdateCopyFrom();
+      UpdateCopyFromForPruning();
     }
 
     // Find last without bos.
     void UpdateCopyFrom() {
       for (copy_from_ -= current_.TotalSize(); copy_from_ >= current_.Base(); copy_from_ -= current_.TotalSize()) {
         if (NGram(copy_from_, current_.Order()).begin()[1] != kBOS) break;
+      }
+    }
+
+    // Find last without bos with count > threshold
+    void UpdateCopyFromForPruning() {
+      for (copy_from_ -= current_.TotalSize(); copy_from_ >= current_.Base(); copy_from_ -= current_.TotalSize()) {
+        NGram gram(copy_from_, current_.Order());
+        if (gram.begin()[1] != kBOS && (!counts_threshold_[current_.Order()-1] || gram.Count() > counts_threshold_[current_.Order()-1])) break;
       }
     }
 
@@ -148,7 +169,7 @@ void AdjustCounts::Run(const ChainPositions &positions) {
   UTIL_TIMER("(%w s) Adjusted counts\n");
 
   const std::size_t order = positions.size();
-  StatCollector stats(order, counts_, discounts_);
+  StatCollector stats(order, counts_, counts_pruned_, discounts_);
   if (order == 1) {
     // Only unigrams.  Just collect stats.
     for (NGramStream full(positions[0]); full; ++full)
@@ -183,17 +204,18 @@ void AdjustCounts::Run(const ChainPositions &positions) {
     // Output all the valid ones that changed.
     for (; lower_valid >= &streams[same]; --lower_valid) {
 
-//      std::cerr << (*lower_valid)->Order() << " : ";
-//      for(const WordIndex* w = (*lower_valid)->begin(); w < (*lower_valid)->end(); w++)
-//          std::cerr << *w << " ";
-//      std::cerr << "= " << lower_counts[(*lower_valid)->Order() - 1] << std::endl;
+//      bool pruned = counts_threshold_[(*lower_valid)->Order() - 1]
+//          ? (*lower_valid)->Count() <= counts_threshold_[(*lower_valid)->Order() - 1] : false;
 
-      stats.Add(lower_valid - streams.begin(), (*lower_valid)->Count());
 
       uint64_t order = (*lower_valid)->Order();
       uint64_t realCount = lower_counts[order - 1];
-      if(order == 1 || !counts_threshold_[order - 1] || realCount > counts_threshold_[order - 1])
+      if(order == 1 || !counts_threshold_[order - 1] || realCount > counts_threshold_[order - 1]) {
+          stats.Add(lower_valid - streams.begin(), (*lower_valid)->Count(), false);
           ++*lower_valid;
+      }
+      else
+          stats.Add(lower_valid - streams.begin(), (*lower_valid)->Count(), true);
     }
 
     for(std::size_t i = 0; i < lower_counts.size(); ++i) {
@@ -219,15 +241,19 @@ void AdjustCounts::Run(const ChainPositions &positions) {
       std::copy(bos, full_end, to->begin());
       to->Count() = full->Count();
     } else {
-      stats.AddFull(full->Count());
+      bool pruned = counts_threshold_[full->Order() - 1] ? full->Count() <= counts_threshold_[full->Order() - 1] : false;
+      stats.AddFull(full->Count(), pruned);
     }
     assert(lower_valid >= &streams[0]);
   }
 
   // Output everything valid.
   for (NGramStream *s = streams.begin(); s <= lower_valid; ++s) {
-    stats.Add(s - streams.begin(), (*s)->Count());
-    ++*s;
+    bool pruned = counts_threshold_[(*s)->Order() - 1]
+        ? (*s)->Count() <= counts_threshold_[(*s)->Order() - 1] : false;
+    stats.Add(s - streams.begin(), (*s)->Count(), pruned);
+    if(not pruned)
+        ++*s;
   }
   // Poison everyone!  Except the N-grams which were already poisoned by the input.
   for (NGramStream *s = streams.begin(); s != streams.end(); ++s)

@@ -5,6 +5,7 @@
 #include "lm/lm_exception.hh"
 
 #include <string.h>
+#include <iostream>
 
 namespace lm { namespace builder {
 
@@ -19,13 +20,14 @@ template <class Callback, class Compare> void JointOrder(const ChainPositions &p
   assert(order); // should always have <unk>.
   unsigned int current = 0;
   while (true) {
-    // Does the context match the lower one?  
+    // Does the context match the lower one?
     if (!memcmp(streams[static_cast<int>(current) - 1]->begin(), streams[current]->begin() + Compare::kMatchOffset, sizeof(WordIndex) * current)) {
       callback.Enter(current, *streams[current]);
-      // Transition to looking for extensions.  
+      // Transition to looking for extensions.
       if (++current < order) continue;
     }
-    // No extension left.  
+
+    // No extension left.
     while(true) {
       assert(current > 0);
       --current;
