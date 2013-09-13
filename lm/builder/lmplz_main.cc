@@ -32,12 +32,12 @@ boost::program_options::typed_value<std::string> *SizeOption(std::size_t &to, co
 
 // Parse and validate pruning thresholds then return vector of threshold counts
 // for each n-grams order.
-std::vector<uint64_t> ParsePruning(StringPiece param, std::size_t order) {
-  // split threshold counts "0,1,2 3" -> [0,1,2,3]
+std::vector<uint64_t> ParsePruning(const std::vector<std::string> &param, std::size_t order) {
   // convert to vector of integers
   std::vector<uint64_t> prune_thresholds;
   prune_thresholds.reserve(order);
-  for (util::TokenIter<util::AnyCharacter, true> it(param, " ,"); it; ++it) {
+  std::cerr << "Pruning ";
+  for (std::vector<std::string>::const_iterator it(param.begin()); it != param.end(); ++it) {
     try {
       prune_thresholds.push_back(boost::lexical_cast<uint64_t>(*it));
     } catch(const boost::bad_lexical_cast &) {
@@ -77,7 +77,8 @@ int main(int argc, char *argv[]) {
     po::options_description options("Language model building options");
     lm::builder::PipelineConfig pipeline;
 
-    std::string text, arpa, pruning_param;
+    std::string text, arpa;
+    std::vector<std::string> pruning;
 
     options.add_options()
       ("order,o", po::value<std::size_t>(&pipeline.order)
@@ -96,7 +97,7 @@ int main(int argc, char *argv[]) {
       ("verbose_header", po::bool_switch(&pipeline.verbose_header), "Add a verbose header to the ARPA file that includes information such as token count, smoothing type, etc.")
       ("text", po::value<std::string>(&text), "Read text from a file instead of stdin")
       ("arpa", po::value<std::string>(&arpa), "Write ARPA to a file instead of stdout")
-      ("prune,P", po::value<std::string>(&pruning_param)->multitoken(), "Prune n-grams with count less than or equal to the given threshold.  Specify one value for each order i.e. 0 0 1 for to prune singleton trigrams and above.  The sequence of values must be non-decreasing and the last value applies to any remaining orders.  Unigram pruning is not implemented, so the first value must be zero.  Default is to not prune, which is equivalent to -prune 0.");
+      ("prune,P", po::value<std::vector<std::string> >(&pruning)->multitoken(), "Prune n-grams with count less than or equal to the given threshold.  Specify one value for each order i.e. 0 0 1 for to prune singleton trigrams and above.  The sequence of values must be non-decreasing and the last value applies to any remaining orders.  Unigram pruning is not implemented, so the first value must be zero.  Default is to not prune, which is equivalent to -prune 0.");
     if (argc == 1) {
       std::cerr << 
         "Builds unpruned language models with modified Kneser-Ney smoothing.\n\n"
@@ -132,7 +133,7 @@ int main(int argc, char *argv[]) {
 #endif
 
     // parse pruning thresholds.  These depend on order, so it is not done as a notifier.
-    pipeline.counts_threshold = ParsePruning(pruning_param, pipeline.order);
+    pipeline.counts_threshold = ParsePruning(pruning, pipeline.order);
 
     util::NormalizeTempPrefix(pipeline.sort.temp_prefix);
 
