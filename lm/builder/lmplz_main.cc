@@ -1,4 +1,5 @@
 #include "lm/builder/pipeline.hh"
+#include "util/exception.hh"
 #include "util/file.hh"
 #include "util/file_piece.hh"
 #include "util/usage.hh"
@@ -7,6 +8,8 @@
 
 #include <boost/program_options.hpp>
 #include <boost/version.hpp>
+#include <boost/algorithm/string.hpp>
+#include <boost/lexical_cast.hpp>
 #include <vector>
 
 namespace {
@@ -28,13 +31,15 @@ boost::program_options::typed_value<std::string> *SizeOption(std::size_t &to, co
 
 } // namespace
 
+std::vector<uint64_t> parse_pruning_parameter(std::string param, std::size_t order);
+
 int main(int argc, char *argv[]) {
   try {
     namespace po = boost::program_options;
     po::options_description options("Language model building options");
     lm::builder::PipelineConfig pipeline;
 
-    std::string text, arpa;
+    std::string text, arpa, pruning_param;
 
     options.add_options()
       ("order,o", po::value<std::size_t>(&pipeline.order)
@@ -53,7 +58,7 @@ int main(int argc, char *argv[]) {
       ("verbose_header", po::bool_switch(&pipeline.verbose_header), "Add a verbose header to the ARPA file that includes information such as token count, smoothing type, etc.")
       ("text", po::value<std::string>(&text), "Read text from a file instead of stdin")
       ("arpa", po::value<std::string>(&arpa), "Write ARPA to a file instead of stdout")
-      ("counts_threshold,P", po::value<std::vector<uint64_t> >(&pipeline.counts_threshold), "Prune n-grams of count equal to or lower than threshold. 0 means no pruning");
+      ("counts_threshold,P", po::value<std::string>(&pruning_param), "Prune n-grams of count equal to or lower than threshold. Specifie threshold for each n-gram order. For example: -P \"0 5 100\" or -P 0,5,100 for order 3 model. 0 means no pruning, default behavior.");
     if (argc == 1) {
       std::cerr << 
         "Builds unpruned language models with modified Kneser-Ney smoothing.\n\n"
@@ -80,38 +85,6 @@ int main(int argc, char *argv[]) {
     po::store(po::parse_command_line(argc, argv, options), vm);
     po::notify(vm);
 
-    //std::cerr << "vector: " << pipeline.counts_threshold.size() << std::endl;
-    // validate pruning threshold if specified
-    if (pipeline.counts_threshold.size() > 0) {
-       // chekc if each n-gram order has threshold specified
-       if (pipeline.counts_threshold.size() != pipeline.order) {
-           std::cerr << 
-            "Incorrect use of pruning option. Set pruning threshold for each order n-grams.\n"
-            << "Threshold counts set: " << pipeline.counts_threshold.size() << std::endl
-            << "Threshold counts expected: " << pipeline.order << std::endl; 
-           return 1;
-       }
-       // threshold for unigram can only be 0 (no pruning)
-       if (pipeline.counts_threshold[0] != 0) {
-        std::cerr << "You are not allowed to prune unigrams. Set counts_threshold to 0 fro unigrams."
-            "Currently you are setting " << pipeline.counts_threshold[0] << std::endl;
-        return 1;
-       }
-       // check if threshold are not in decreasing order
-       uint64_t lower_threshold = 0;
-       for (std::vector<uint64_t>::iterator it = pipeline.counts_threshold.begin(); it != pipeline.counts_threshold.end(); ++it)
-           if (lower_threshold > *it) {
-               std::cerr << "Do not speciefie pruning threshold counts in decreasing order\n"
-              "Pruning counts threshold for lower n-grams is not allowed to be specified higher than for higher order n-grams" << std::endl;
-               return 1;
-           } else lower_threshold = *it;
-    } else {
-       // pruning is not specified, so set threshold to 0 for all order n-grams
-       pipeline.counts_threshold.reserve(pipeline.order);
-       for (std::size_t i = 0; i < pipeline.order; ++i)
-            pipeline.counts_threshold.push_back(0);
-    }
-
     // required() appeared in Boost 1.42.0.
 #if BOOST_VERSION < 104200
     if (!vm.count("order")) {
@@ -119,6 +92,9 @@ int main(int argc, char *argv[]) {
       return 1;
     }
 #endif
+
+    // parse pruning thresholds
+    pipeline.counts_threshold = parse_pruning_parameter(pruning_param, pipeline.order);
 
     util::NormalizeTempPrefix(pipeline.sort.temp_prefix);
 
@@ -152,3 +128,46 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 }
+
+// parse and validate pruning thresholds and return vector of threshold counts for each n-grams order
+// return vector of zeroes if param is empty
+std::vector<uint64_t> parse_pruning_parameter(std::string param, std::size_t order) {
+    // split threshold counts "0,1,2 3" -> [0,1,2,3]
+    std::vector<std::string> pruning_thresholds;
+    boost::split(pruning_thresholds, param, boost::is_any_of(", "), boost::token_compress_on);
+    // convert to vector of integers
+    std::vector<uint64_t> counts_threshold;
+    counts_threshold.reserve(pruning_thresholds.size());
+    for (std::vector<std::string>::iterator it = pruning_thresholds.begin(); it != pruning_thresholds.end(); ++it)
+        try {
+            uint64_t count = boost::lexical_cast<uint64_t>( it->c_str() );
+            counts_threshold.push_back(count);
+        } catch( boost::bad_lexical_cast const& ) {
+            UTIL_THROW(util::Exception, "Pruning counts threshold has to be nonnegative numbers");
+        }
+    
+    // validate pruning threshold if specified
+    if (counts_threshold.size() > 0) {
+        // throw if each n-gram order has not  threshold specified
+        UTIL_THROW_IF(counts_threshold.size() != order, util::Exception, 
+          "Incorrect use of pruning option. Set pruning threshold for each order n-grams.");
+        // threshold for unigram can only be 0 (no pruning)
+        UTIL_THROW_IF(counts_threshold[0] != 0, util::Exception, "You are not allowed to prune unigrams. Set counts_threshold to 0 for unigrams.");
+        
+        // check if threshold are not in decreasing order
+        uint64_t lower_threshold = 0;
+
+        for (std::vector<uint64_t>::iterator it = counts_threshold.begin(); it != counts_threshold.end(); ++it) {
+            UTIL_THROW_IF(lower_threshold > *it, util::Exception, "Pruning counts threshold for lower n-grams are not allowed to be specified higher than for higher order n-grams");
+            lower_threshold = *it;
+        }
+    } else {
+       // pruning is not specified, so set threshold to 0 for all order n-grams
+       counts_threshold.reserve(order);
+       for (std::size_t i = 0; i < order; ++i)
+           counts_threshold.push_back(0);
+    }
+
+    return counts_threshold;
+}
+
