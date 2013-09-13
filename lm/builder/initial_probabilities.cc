@@ -15,39 +15,64 @@
 namespace lm { namespace builder {
 
 namespace {
+
 struct BufferEntry {
   // Gamma from page 20 of Chen and Goodman.
-  uint64_t hash_value;
   float gamma;
   // \sum_w a(c w) for all w.
   float denominator;
 };
 
+struct HashBufferEntry : public BufferEntry {
+  // Hash value of ngram. Used to join contexts with backoffs.
+  uint64_t hash_value;
+};
+
+
 // Extract an array of HashedGamma from an array of BufferEntry.
 class OnlyGamma {
   public:
+    OnlyGamma(bool pruning) : pruning_(pruning) {}
+
     void Run(const util::stream::ChainPosition &position) {
-      size_t i = 0;
       for (util::stream::Link block_it(position); block_it; ++block_it) {
-        HashGamma *out = static_cast<HashGamma*>(block_it->Get());
-        const BufferEntry *in = static_cast<const BufferEntry*>(block_it->Get());
-        const BufferEntry *end = static_cast<const BufferEntry*>(block_it->ValidEnd());
-        for (out += 1, in += 1; in < end; out += 1, in += 1) {
-          float gamma_buf = in->gamma;
-          out->hash_value = in->hash_value;
-          out->gamma = gamma_buf;
-          ++i;
+        if(pruning_) {
+          const HashBufferEntry *in = static_cast<const HashBufferEntry*>(block_it->Get());
+          const HashBufferEntry *end = static_cast<const HashBufferEntry*>(block_it->ValidEnd());
+
+          // Just make it point to the beginning of the stream so it can be overwritten
+          // With HashGamma values. Do not attempt to interpret the values until set below.
+          HashGamma *out = static_cast<HashGamma*>(block_it->Get());
+          for (; in < end; out += 1, in += 1) {
+            // buffering, otherwise might overwrite values too early
+            float gamma_buf = in->gamma;
+            uint64_t hash_buf = in->hash_value;
+
+            out->gamma = gamma_buf;
+            out->hash_value = hash_buf;
+          }
+          block_it->SetValidSize((block_it->ValidSize() * sizeof(HashGamma)) / sizeof(HashBufferEntry));
         }
-        block_it->SetValidSize((block_it->ValidSize() * sizeof(HashGamma))/sizeof(BufferEntry));
+        else {
+          float *out = static_cast<float*>(block_it->Get());
+          const float *in = out;
+          const float *end = static_cast<const float*>(block_it->ValidEnd());
+          for (out += 1, in += 2; in < end; out += 1, in += 2) {
+            *out = *in;
+          }
+          block_it->SetValidSize(block_it->ValidSize() / 2);
+        }
       }
-      std::cerr << "Backoffs: " << i << std::endl;
     }
+
+    private:
+      bool pruning_;
 };
 
 class AddRight {
   public:
-    AddRight(const Discount &discount, const util::stream::ChainPosition &input)
-      : discount_(discount), input_(input) {}
+    AddRight(const Discount &discount, const util::stream::ChainPosition &input, bool pruning)
+      : discount_(discount), input_(input), pruning_(pruning) {}
 
     void Run(const util::stream::ChainPosition &output) {
       NGramStream in(input_);
@@ -65,14 +90,20 @@ class AddRight {
           denominator += in->Count();
           ++counts[std::min(in->Count(), static_cast<uint64_t>(3))];
         } while (++in && !memcmp(&previous[0], in->begin(), size));
+
         BufferEntry &entry = *reinterpret_cast<BufferEntry*>(out.Get());
-        entry.hash_value = util::MurmurHashNative(previous.data(), previous.size());
         entry.denominator = static_cast<float>(denominator);
         entry.gamma = 0.0;
         for (unsigned i = 1; i <= 3; ++i) {
           entry.gamma += discount_.Get(i) * static_cast<float>(counts[i]);
         }
         entry.gamma /= entry.denominator;
+
+        if(pruning_) {
+          // If pruning is enabled the stream actually contains HashBufferEntry, see InitialProbabilities(...),
+          // so add a hash value that identifies the current ngram.
+          static_cast<HashBufferEntry*>(&entry)->hash_value = util::MurmurHashNative(previous.data(), previous.size());
+        }
       }
       out.Poison();
     }
@@ -80,6 +111,7 @@ class AddRight {
   private:
     const Discount &discount_;
     const util::stream::ChainPosition input_;
+    bool pruning_;
 };
 
 class MergeRight {
@@ -129,17 +161,21 @@ class MergeRight {
 
 } // namespace
 
-void InitialProbabilities(const InitialProbabilitiesConfig &config, const std::vector<Discount> &discounts, Chains &primary, Chains &second_in, Chains &gamma_out) {
-  util::stream::ChainConfig gamma_config = config.adder_out;
-  gamma_config.entry_size = sizeof(BufferEntry);
+void InitialProbabilities(const InitialProbabilitiesConfig &config, const std::vector<Discount> &discounts, Chains &primary, Chains &second_in, Chains &gamma_out, const std::vector<uint64_t>& count_thresholds) {
   for (size_t i = 0; i < primary.size(); ++i) {
+    util::stream::ChainConfig gamma_config = config.adder_out;
+    if(count_thresholds[i] > 0)
+        gamma_config.entry_size = sizeof(HashBufferEntry);
+    else
+        gamma_config.entry_size = sizeof(BufferEntry);
+
     util::stream::ChainPosition second(second_in[i].Add());
     second_in[i] >> util::stream::kRecycle;
     gamma_out.push_back(gamma_config);
-    gamma_out[i] >> AddRight(discounts[i], second);
+    gamma_out[i] >> AddRight(discounts[i], second, count_thresholds[i] > 0);
     primary[i] >> MergeRight(config.interpolate_unigrams, gamma_out[i].Add(), discounts[i]);
     // Don't bother with the OnlyGamma thread for something to discard.
-    if (i) gamma_out[i] >> OnlyGamma();
+    if (i) gamma_out[i] >> OnlyGamma(count_thresholds[i] > 0);
   }
 }
 

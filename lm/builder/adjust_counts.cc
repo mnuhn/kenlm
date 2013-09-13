@@ -112,7 +112,7 @@ class CollapseStream {
       if ((current_.begin()[1] == kBOS || (counts_threshold_[current_.Order()-1] && current_.Count() <= counts_threshold_[current_.Order()-1]))
           && current_.Base() < copy_from_) {
         memcpy(current_.Base(), copy_from_, current_.TotalSize());
-        UpdateCopyFromForPruning();
+        UpdateCopyFrom();
       }
 
       current_.NextInMemory();
@@ -135,18 +135,11 @@ class CollapseStream {
       }
       current_.ReBase(block_->Get());
       copy_from_ = static_cast<uint8_t*>(block_->Get()) + block_->ValidSize();
-      UpdateCopyFromForPruning();
+      UpdateCopyFrom();
     }
 
-    // Find last without bos.
+    // Find last without bos with count > threshold if counts are defined
     void UpdateCopyFrom() {
-      for (copy_from_ -= current_.TotalSize(); copy_from_ >= current_.Base(); copy_from_ -= current_.TotalSize()) {
-        if (NGram(copy_from_, current_.Order()).begin()[1] != kBOS) break;
-      }
-    }
-
-    // Find last without bos with count > threshold
-    void UpdateCopyFromForPruning() {
       for (copy_from_ -= current_.TotalSize(); copy_from_ >= current_.Base(); copy_from_ -= current_.TotalSize()) {
         NGram gram(copy_from_, current_.Order());
         if (gram.begin()[1] != kBOS && (!counts_threshold_[current_.Order()-1] || gram.Count() > counts_threshold_[current_.Order()-1])) break;
@@ -218,8 +211,8 @@ void AdjustCounts::Run(const ChainPositions &positions) {
           stats.Add(lower_valid - streams.begin(), (*lower_valid)->Count(), true);
     }
 
-    for(std::size_t i = 0; i < lower_counts.size(); ++i) {
-        if(i >= same)
+    for (std::size_t i = 0; i < lower_counts.size(); ++i) {
+        if (i >= same)
             lower_counts[i] = 0;
         lower_counts[i] += full->Count();
     }
