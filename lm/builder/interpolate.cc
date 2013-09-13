@@ -14,7 +14,8 @@ namespace {
 
 class Callback {
   public:
-    Callback(float uniform_prob, const ChainPositions &backoffs) : backoffs_(backoffs.size()), probs_(backoffs.size() + 2) {
+    Callback(float uniform_prob, const ChainPositions &backoffs, const std::vector<uint64_t>& count_thresholds)
+      : backoffs_(backoffs.size()), probs_(backoffs.size() + 2), count_thresholds_(count_thresholds) {
       probs_[0] = uniform_prob;
       for (std::size_t i = 0; i < backoffs.size(); ++i) {
         backoffs_.push_back(backoffs[i]);
@@ -35,28 +36,32 @@ class Callback {
       pay.complete.prob = pay.uninterp.prob + pay.uninterp.gamma * probs_[order_minus_1];
       probs_[order_minus_1 + 1] = pay.complete.prob;
       pay.complete.prob = log10(pay.complete.prob);
-      // TODO: this is a hack to skip n-grams that don't appear as context.  Pruning will require some different handling.
 
       if (order_minus_1 < backoffs_.size() && *(gram.end() - 1) != kUNK && *(gram.end() - 1) != kEOS) {
 
+        // This skips over ngrams if backoffs have been exhausted.
         if(!backoffs_[order_minus_1]) {
-            pay.complete.backoff = 0.0;
-            return;
+          pay.complete.backoff = 0.0;
+          return;
         }
 
+        if(count_thresholds_[order_minus_1 + 1] > 0) {
+          const HashGamma *hashed_backoff = static_cast<const HashGamma*>(backoffs_[order_minus_1].Get());
 
-        void* data = backoffs_[order_minus_1].Get();
-        const HashGamma *hashed_backoff = static_cast<const HashGamma*>(data);
-        uint64_t h = util::MurmurHashNative(gram.begin(), gram.Order());
+          //Compute hash value for current context
+          uint64_t current_hash = util::MurmurHashNative(gram.begin(), gram.Order());
 
-        //std::cerr << h << " " << hashed_backoff->hash_value << std::endl;
-        if(h == hashed_backoff->hash_value) {
+          if(current_hash == hashed_backoff->hash_value) {
             pay.complete.backoff = log10(hashed_backoff->gamma);
             ++backoffs_[order_minus_1];
-        } else {
+          } else {
+            // Has been pruned away so it is not a context anymore
             pay.complete.backoff = 0.0;
+          }
+        } else {
+          pay.complete.backoff = log10(*static_cast<const float*>(backoffs_[order_minus_1].Get()));
+          ++backoffs_[order_minus_1];
         }
-
       } else {
         // Not a context.
         pay.complete.backoff = 0.0;
@@ -69,16 +74,17 @@ class Callback {
     FixedArray<util::stream::Stream> backoffs_;
 
     std::vector<float> probs_;
+    const std::vector<uint64_t>& count_thresholds_;
 };
 } // namespace
 
-Interpolate::Interpolate(uint64_t unigram_count, const ChainPositions &backoffs)
-  : uniform_prob_(1.0 / static_cast<float>(unigram_count - 1)), backoffs_(backoffs) {}
+Interpolate::Interpolate(uint64_t unigram_count, const ChainPositions &backoffs, const std::vector<uint64_t>& count_thresholds)
+  : uniform_prob_(1.0 / static_cast<float>(unigram_count - 1)), backoffs_(backoffs), count_thresholds_(count_thresholds) {}
 
 // perform order-wise interpolation
 void Interpolate::Run(const ChainPositions &positions) {
   assert(positions.size() == backoffs_.size() + 1);
-  Callback callback(uniform_prob_, backoffs_);
+  Callback callback(uniform_prob_, backoffs_, count_thresholds_);
   JointOrder<Callback, SuffixOrder>(positions, callback);
 }
 

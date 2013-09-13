@@ -218,8 +218,8 @@ void AdjustCounts::Run(const ChainPositions &positions) {
           stats.Add(lower_valid - streams.begin(), (*lower_valid)->Count(), true);
     }
 
-    for(std::size_t i = 0; i < lower_counts.size(); ++i) {
-        if(i >= same)
+    for (std::size_t i = 0; i < lower_counts.size(); ++i) {
+        if (i >= same)
             lower_counts[i] = 0;
         lower_counts[i] += full->Count();
     }

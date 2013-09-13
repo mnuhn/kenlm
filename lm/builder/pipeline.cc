@@ -247,7 +247,7 @@ void InitialProbabilities(const std::vector<uint64_t> &counts, const std::vector
   }
 
   Chains gamma_chains(config.order);
-  InitialProbabilities(config.initial_probs, discounts, master.MutableChains(), second, gamma_chains);
+  InitialProbabilities(config.initial_probs, discounts, master.MutableChains(), second, gamma_chains, config.counts_threshold);
   // Don't care about gamma for 0.
   gamma_chains[0] >> util::stream::kRecycle;
   gammas.Init(config.order - 1);
@@ -265,13 +265,19 @@ void InterpolateProbabilities(const std::vector<uint64_t> &counts, Master &maste
   master.MaximumLazyInput(counts, primary);
 
   Chains gamma_chains(config.order - 1);
-  util::stream::ChainConfig read_backoffs(config.read_backoffs);
-  read_backoffs.entry_size = sizeof(HashGamma);
   for (std::size_t i = 0; i < config.order - 1; ++i) {
+    util::stream::ChainConfig read_backoffs(config.read_backoffs);
+
+    // Add 1 because here we are skipping unigrams
+    if(config.counts_threshold[i + 1] > 0)
+        read_backoffs.entry_size = sizeof(HashGamma);
+    else
+        read_backoffs.entry_size = sizeof(float);
+
     gamma_chains.push_back(read_backoffs);
     gamma_chains.back() >> gammas[i].Source();
   }
-  master >> Interpolate(counts[0], ChainPositions(gamma_chains));
+  master >> Interpolate(counts[0], ChainPositions(gamma_chains), config.counts_threshold);
   gamma_chains >> util::stream::kRecycle;
   master.BufferFinal(counts);
 }
