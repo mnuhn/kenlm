@@ -13,7 +13,7 @@ class EnumerateStates {
   public:
     virtual ~EnumerateStates() {}
 
-    virtual void Add(std::vector<WordIndex> ngram) = 0;
+    virtual void Add(const std::vector<WordIndex> & ngram) = 0;
 
   protected:
     EnumerateStates() {}
