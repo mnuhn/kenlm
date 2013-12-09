@@ -8,6 +8,8 @@
 #include "lm/value.hh"
 #include "lm/vocab.hh"
 
+#include "lm/enumerate_states.hh"
+
 #include "util/bit_packing.hh"
 #include "util/file_piece.hh"
 
@@ -166,7 +168,8 @@ template <class Build, class Activate, class Store> void ReadNGrams(
     std::vector<util::ProbingHashTable<typename Build::Value::ProbingEntry, util::IdentityHash> > &middle,
     Activate activate,
     Store &store,
-    PositiveProbWarn &warn) {
+    PositiveProbWarn &warn,
+    const Config & config) {
   typedef typename Build::Value Value;
   assert(n >= 2);
   ReadNGramHeader(f, n);
@@ -180,6 +183,7 @@ template <class Build, class Activate, class Store> void ReadNGrams(
   for (size_t i = 0; i < count; ++i) {
     ReadNGram(f, n, vocab, &*vocab_ids.begin(), entry.value, warn);
     build.SetRest(&*vocab_ids.begin(), n, entry.value);
+    if (config.enumerate_states) config.enumerate_states->Add(vocab_ids);
 
     keys[0] = detail::CombineWordHash(static_cast<uint64_t>(vocab_ids.front()), vocab_ids[1]);
     for (unsigned int h = 1; h < n - 1; ++h) {
@@ -188,6 +192,8 @@ template <class Build, class Activate, class Store> void ReadNGrams(
     // Initially the sign bit is on, indicating it does not extend left.  Most already have this but there might +0.0.
     util::SetSign(entry.value.prob);
     entry.key = keys[n-2];
+
+
 
     store.Insert(entry);
     between.clear();
@@ -230,7 +236,7 @@ template <class Value> void HashedSearch<Value>::InitializeFromARPA(const char *
 
 template <> void HashedSearch<BackoffValue>::DispatchBuild(util::FilePiece &f, const std::vector<uint64_t> &counts, const Config &config, const ProbingVocabulary &vocab, PositiveProbWarn &warn) {
   NoRestBuild build;
-  ApplyBuild(f, counts, vocab, warn, build);
+  ApplyBuild(f, counts, vocab, warn, build, config);
 }
 
 template <> void HashedSearch<RestValue>::DispatchBuild(util::FilePiece &f, const std::vector<uint64_t> &counts, const Config &config, const ProbingVocabulary &vocab, PositiveProbWarn &warn) {
@@ -238,19 +244,19 @@ template <> void HashedSearch<RestValue>::DispatchBuild(util::FilePiece &f, cons
     case Config::REST_MAX:
       {
         MaxRestBuild build;
-        ApplyBuild(f, counts, vocab, warn, build);
+        ApplyBuild(f, counts, vocab, warn, build, config);
       }
       break;
     case Config::REST_LOWER:
       {
         LowerRestBuild<ProbingModel> build(config, counts.size(), vocab);
-        ApplyBuild(f, counts, vocab, warn, build);
+        ApplyBuild(f, counts, vocab, warn, build, config);
       }
       break;
   }
 }
 
-template <class Value> template <class Build> void HashedSearch<Value>::ApplyBuild(util::FilePiece &f, const std::vector<uint64_t> &counts, const ProbingVocabulary &vocab, PositiveProbWarn &warn, const Build &build) {
+template <class Value> template <class Build> void HashedSearch<Value>::ApplyBuild(util::FilePiece &f, const std::vector<uint64_t> &counts, const ProbingVocabulary &vocab, PositiveProbWarn &warn, const Build &build, const Config & config) {
   for (WordIndex i = 0; i < counts[0]; ++i) {
     build.SetRest(&i, (unsigned int)1, unigram_.Raw()[i]);
   }
@@ -258,18 +264,18 @@ template <class Value> template <class Build> void HashedSearch<Value>::ApplyBui
   try {
     if (counts.size() > 2) {
       ReadNGrams<Build, ActivateUnigram<typename Value::Weights>, Middle>(
-          f, 2, counts[1], vocab, build, unigram_.Raw(), middle_, ActivateUnigram<typename Value::Weights>(unigram_.Raw()), middle_[0], warn);
+          f, 2, counts[1], vocab, build, unigram_.Raw(), middle_, ActivateUnigram<typename Value::Weights>(unigram_.Raw()), middle_[0], warn, config);
     }
     for (unsigned int n = 3; n < counts.size(); ++n) {
       ReadNGrams<Build, ActivateLowerMiddle<Middle>, Middle>(
-          f, n, counts[n-1], vocab, build, unigram_.Raw(), middle_, ActivateLowerMiddle<Middle>(middle_[n-3]), middle_[n-2], warn);
+          f, n, counts[n-1], vocab, build, unigram_.Raw(), middle_, ActivateLowerMiddle<Middle>(middle_[n-3]), middle_[n-2], warn, config);
     }
     if (counts.size() > 2) {
       ReadNGrams<Build, ActivateLowerMiddle<Middle>, Longest>(
-          f, counts.size(), counts[counts.size() - 1], vocab, build, unigram_.Raw(), middle_, ActivateLowerMiddle<Middle>(middle_.back()), longest_, warn);
+          f, counts.size(), counts[counts.size() - 1], vocab, build, unigram_.Raw(), middle_, ActivateLowerMiddle<Middle>(middle_.back()), longest_, warn, config);
     } else {
       ReadNGrams<Build, ActivateUnigram<typename Value::Weights>, Longest>(
-          f, counts.size(), counts[counts.size() - 1], vocab, build, unigram_.Raw(), middle_, ActivateUnigram<typename Value::Weights>(unigram_.Raw()), longest_, warn);
+          f, counts.size(), counts[counts.size() - 1], vocab, build, unigram_.Raw(), middle_, ActivateUnigram<typename Value::Weights>(unigram_.Raw()), longest_, warn, config);
     }
   } catch (util::ProbingSizeException &e) {
     UTIL_THROW(util::ProbingSizeException, "Avoid pruning n-grams like \"bar baz quux\" when \"foo bar baz quux\" is still in the model.  KenLM will work when this pruning happens, but the probing model assumes these events are rare enough that using blank space in the probing hash table will cover all of them.  Increase probing_multiplier (-p to build_binary) to add more blank spaces.\n");

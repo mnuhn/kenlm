@@ -13,6 +13,7 @@
 namespace lm {
 
 class EnumerateVocab;
+class EnumerateStates;
 
 namespace ngram {
 
@@ -34,6 +35,11 @@ struct Config {
   // enumerate_vocab.hh for more detail.  Config does not take ownership; you
   // are still responsible for deleting it (or stack allocating).
   EnumerateVocab *enumerate_vocab;
+
+  // This will be called with every state known to the LM.  See
+  // enumerate_states.hh for more detail.  Config does not take ownership; you
+  // are still responsible for deleting it (or stack allocating).
+  EnumerateStates *enumerate_states;
 
 
   // ONLY EFFECTIVE WHEN READING ARPA
